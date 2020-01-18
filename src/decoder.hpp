@@ -421,7 +421,7 @@ void Decoder::decode_stream_raw_wav_chunk(kaldi::OnlineNnet2FeaturePipeline &fea
     kaldi::Matrix<kaldi::BaseFloat> wave_matrix;
     read_raw_wav_stream(wav_stream, data_bytes, wave_matrix);
 
-    constexpr kaldi::BaseFloat samp_freq = 8000;
+    constexpr kaldi::BaseFloat samp_freq = 16000;
 
     // get the data for channel zero (if the signal is not mono, we only
     // take the first channel).
@@ -502,7 +502,7 @@ void Decoder::decode_raw_wav_audio(std::istream &wav_stream,
     // get the data for channel zero (if the signal is not mono, we only
     // take the first channel).
     kaldi::SubVector<kaldi::BaseFloat> data(wave_matrix, 0);
-    constexpr kaldi::BaseFloat samp_freq = 8000;
+    constexpr kaldi::BaseFloat samp_freq = 16000;
 
     int32 chunk_length;
     if (chunk_size > 0) {

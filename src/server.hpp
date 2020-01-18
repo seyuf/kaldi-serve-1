@@ -52,6 +52,34 @@ void add_alternatives_to_response(const utterance_results_t &results, kaldi_serv
     }
 }
 
+void add_alternatives_to_responseStream(const utterance_results_t &results, kaldi_serve::StreamingRecognizeResponse *response, const kaldi_serve::RecognitionConfig &config, bool is_final) noexcept {
+
+    kaldi_serve::SpeechRecognitionResult *sr_result = response->add_results();
+    kaldi_serve::SpeechRecognitionAlternative *alternative;
+    kaldi_serve::Word *word;
+    sr_result->set_is_final(is_final);
+
+    // find alternatives on final `lattice` after all chunks have been processed
+    for (auto const &res : results) {
+        if (!res.transcript.empty()) {
+            alternative = sr_result->add_alternatives();
+            alternative->set_transcript(res.transcript);
+            alternative->set_confidence(res.confidence);
+            alternative->set_am_score(res.am_score);
+            alternative->set_lm_score(res.lm_score);
+            if (config.word_level()) {
+                for (auto const &w: res.words) {
+                    word = alternative->add_words();
+                    word->set_start_time(w.start_time);
+                    word->set_end_time(w.end_time);
+                    word->set_word(w.word);
+                    word->set_confidence(w.confidence);
+                }
+            }
+        }
+    }
+}
+
 // KaldiServeImpl ::
 // Defines the core server logic and request/response handlers.
 // Keeps `Decoder` instances cached in a thread-safe
@@ -87,7 +115,7 @@ class KaldiServeImpl final : public kaldi_serve::KaldiServe::Service {
     // Accepts a stream of `RecognizeRequest` messages
     // Returns a stream of `RecognizeResponse` messages
     grpc::Status BidiStreamingRecognize(grpc::ServerContext *const,
-                                        grpc::ServerReaderWriter<kaldi_serve::RecognizeResponse, kaldi_serve::RecognizeRequest>*) override;
+                                        grpc::ServerReaderWriter<kaldi_serve::StreamingRecognizeResponse, kaldi_serve::StreamingRecognizeRequest>*) override;
 };
 
 KaldiServeImpl::KaldiServeImpl(const std::vector<ModelSpec> &model_specs) noexcept {
@@ -249,8 +277,8 @@ grpc::Status KaldiServeImpl::StreamingRecognize(grpc::ServerContext *const conte
 }
 
 grpc::Status KaldiServeImpl::BidiStreamingRecognize(grpc::ServerContext *const context,
-                                                    grpc::ServerReaderWriter<kaldi_serve::RecognizeResponse, kaldi_serve::RecognizeRequest> *stream) {
-    kaldi_serve::RecognizeRequest request_;
+                                                    grpc::ServerReaderWriter<kaldi_serve::StreamingRecognizeResponse, kaldi_serve::StreamingRecognizeRequest> *stream) {
+    kaldi_serve::StreamingRecognizeRequest request_;
     stream->Read(&request_);
 
     // We first read the request to see if we have the correct model and language to load
@@ -286,6 +314,9 @@ grpc::Status KaldiServeImpl::BidiStreamingRecognize(grpc::ServerContext *const c
 
     // read chunks until end of stream
     do {
+
+
+
         if (DEBUG) {
             // LOG REQUEST RESOLVE TIME --> START (at the last request since that would be the actual latency)
             start_time = std::chrono::system_clock::now();
@@ -306,8 +337,8 @@ grpc::Status KaldiServeImpl::BidiStreamingRecognize(grpc::ServerContext *const c
             utterance_results_t k_results_;
             decoder_->decode_stream_final(feature_pipeline, decoder, n_best, k_results_, config.word_level(), true);
 
-            kaldi_serve::RecognizeResponse response_;
-            add_alternatives_to_response(k_results_, &response_, config);
+            kaldi_serve::StreamingRecognizeResponse response_;
+            add_alternatives_to_responseStream(k_results_, &response_, config, false);
 
             stream->Write(response_);
 
@@ -319,13 +350,14 @@ grpc::Status KaldiServeImpl::BidiStreamingRecognize(grpc::ServerContext *const c
             decoder_queue_map_[model_id]->release(decoder_);
             return grpc::Status(grpc::StatusCode::INTERNAL, e.what());
         }
-    } while (stream->Read(&request_));
+    } while (stream->Read(&request_) && !request_.config().end_of_utterance());
 
     utterance_results_t k_results_;
     decoder_->decode_stream_final(feature_pipeline, decoder, n_best, k_results_, config.word_level());
 
-    kaldi_serve::RecognizeResponse response_;
-    add_alternatives_to_response(k_results_, &response_, config);
+    kaldi_serve::StreamingRecognizeResponse response_;
+    
+    add_alternatives_to_responseStream(k_results_, &response_, config, true);
 
     stream->Write(response_);
     // writer->
